@@ -146,11 +146,18 @@ class WeatherMatrixDisplay:
             # Startup indicator: Draw a green square to show the app is running
             if self.backend == "pi" and MATRIX_AVAILABLE and offscreen_canvas:
                 logging.info("Drawing startup indicator (green square)...")
-                # First try Fill() to verify the matrix works
+                # First try Fill() to verify the matrix works - must swap continuously
                 logging.info("Filling canvas with red to test...")
-                offscreen_canvas.Fill(255, 0, 0)
-                offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
-                time.sleep(2.0)
+                test_duration = 2.0
+                test_start = time.time()
+                while (time.time() - test_start) < test_duration and self.running:
+                    offscreen_canvas.Fill(255, 0, 0)
+                    offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
+                    time.sleep(0.05)  # Small delay between swaps
+                
+                if not self.running:
+                    logging.info("Shutdown requested during test")
+                    return
                 
                 # Now draw a green square in the center
                 square_size = 8
@@ -161,7 +168,7 @@ class WeatherMatrixDisplay:
                 logging.info("Startup indicator displayed. Waiting 30 seconds before fetching weather...")
                 # Break sleep into small chunks to allow signal handling and keep swapping buffer
                 wait_time = 30.0
-                sleep_interval = 0.1  # Check every 0.1 seconds and swap buffer
+                sleep_interval = 0.05  # Check every 0.05 seconds and swap buffer
                 elapsed = 0.0
                 while elapsed < wait_time and self.running:
                     # Clear and redraw the square each frame to keep it visible
