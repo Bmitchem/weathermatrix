@@ -139,6 +139,22 @@ class WeatherMatrixDisplay:
             offscreen_canvas = self.canvas._matrix.CreateFrameCanvas()
         
         try:
+            # Startup indicator: Draw a green square to show the app is running
+            if self.backend == "pi" and MATRIX_AVAILABLE and offscreen_canvas:
+                logging.info("Drawing startup indicator (green square)...")
+                offscreen_canvas.Clear()
+                # Draw a green square in the center
+                square_size = 8
+                start_x = (self.canvas.width - square_size) // 2
+                start_y = (self.canvas.height - square_size) // 2
+                for y in range(start_y, start_y + square_size):
+                    for x in range(start_x, start_x + square_size):
+                        offscreen_canvas.SetPixel(x, y, 0, 255, 0)
+                offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
+                logging.info("Startup indicator displayed. Waiting 30 seconds before fetching weather...")
+                time.sleep(30.0)
+                logging.info("30 seconds elapsed. Starting weather display...")
+            
             frame_count = 0
             while self.running:
                 try:
