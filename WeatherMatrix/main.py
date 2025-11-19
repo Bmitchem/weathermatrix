@@ -176,11 +176,14 @@ class WeatherMatrixDisplay:
                                     op.kwargs["b"]
                                 )
                                 try:
+                                    # DrawText y coordinate should be: desired_top_y + font.baseline()
+                                    # The examples show: DrawText(canvas, font, x, y + font.baseline(), ...)
+                                    draw_y = op.kwargs["y"] + self.font.baseline
                                     graphics.DrawText(
                                         offscreen_canvas,
                                         self.font,
                                         op.kwargs["x"],
-                                        op.kwargs["y"],
+                                        draw_y,
                                         color,
                                         op.kwargs["text"]
                                     )

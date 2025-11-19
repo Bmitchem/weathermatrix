@@ -100,10 +100,10 @@ def calculate_layout(weather: WeatherData, width: int = 64, height: int = 32) ->
     # We'll center it approximately
     text_width_estimate = len(temp_text) * 6
     temp_x = max(0, (width - text_width_estimate) // 2)
-    # Y coordinate is the baseline position - use a value that accounts for font height
-    # For 7x13 font with baseline=11, we want text starting near the top
-    # Using y=11 puts baseline at y=11, text extends roughly from y=0 to y=13
-    temp_y = 11  # Baseline for first line (matches font baseline)
+    # Y coordinate is the top position where we want text to start
+    # DrawText will add font.baseline() to this, so y=0 means text starts at top
+    # For first line, use y=0 to start at the very top
+    temp_y = 0  # Top position for first line (DrawText adds baseline)
     
     ops.append(DrawOp(
         "text",
@@ -118,9 +118,10 @@ def calculate_layout(weather: WeatherData, width: int = 64, height: int = 32) ->
     # Line 2: Condition text (centered, bottom)
     condition_text = get_condition_text(weather)
     condition_x = max(0, (width - len(condition_text) * 6) // 2)
-    # Y coordinate for second line - position near bottom but ensure it's visible
-    # For 32-row display, y=25 puts baseline at y=25, text extends roughly y=14 to y=27
-    condition_y = 25  # Baseline for second line
+    # Y coordinate for second line - position near bottom
+    # DrawText adds font.baseline(), so y=14 means baseline at y=14+11=25
+    # For 32-row display with font height 13, y=14 puts text roughly at y=14 to y=27
+    condition_y = 14  # Top position for second line (DrawText adds baseline)
     
     # Use neutral white/gray for condition
     ops.append(DrawOp(
