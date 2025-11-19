@@ -152,7 +152,16 @@ class WeatherMatrixDisplay:
                         offscreen_canvas.SetPixel(x, y, 0, 255, 0)
                 offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
                 logging.info("Startup indicator displayed. Waiting 30 seconds before fetching weather...")
-                time.sleep(30.0)
+                # Break sleep into small chunks to allow signal handling
+                wait_time = 30.0
+                sleep_interval = 0.5  # Check every 0.5 seconds
+                elapsed = 0.0
+                while elapsed < wait_time and self.running:
+                    time.sleep(sleep_interval)
+                    elapsed += sleep_interval
+                if not self.running:
+                    logging.info("Shutdown requested during startup wait")
+                    return
                 logging.info("30 seconds elapsed. Starting weather display...")
             
             frame_count = 0
