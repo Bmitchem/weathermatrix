@@ -136,16 +136,27 @@ class WeatherMatrixDisplay:
         # Use double buffering for real matrix
         offscreen_canvas = None
         if self.backend == "pi" and MATRIX_AVAILABLE and hasattr(self.canvas, "_matrix"):
+            logging.info(f"Creating offscreen canvas from matrix (width={self.canvas._matrix.width}, height={self.canvas._matrix.height})")
             offscreen_canvas = self.canvas._matrix.CreateFrameCanvas()
+            logging.info(f"Offscreen canvas created: {offscreen_canvas}")
+            if offscreen_canvas:
+                logging.info(f"Offscreen canvas dimensions: {offscreen_canvas.width}x{offscreen_canvas.height}")
         
         try:
             # Startup indicator: Draw a green square to show the app is running
             if self.backend == "pi" and MATRIX_AVAILABLE and offscreen_canvas:
                 logging.info("Drawing startup indicator (green square)...")
-                # Draw a green square in the center
+                # First try Fill() to verify the matrix works
+                logging.info("Filling canvas with red to test...")
+                offscreen_canvas.Fill(255, 0, 0)
+                offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
+                time.sleep(2.0)
+                
+                # Now draw a green square in the center
                 square_size = 8
                 start_x = (self.canvas.width - square_size) // 2
                 start_y = (self.canvas.height - square_size) // 2
+                logging.info(f"Drawing green square at ({start_x}, {start_y}), size {square_size}x{square_size}")
                 
                 logging.info("Startup indicator displayed. Waiting 30 seconds before fetching weather...")
                 # Break sleep into small chunks to allow signal handling and keep swapping buffer
