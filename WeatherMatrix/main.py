@@ -75,50 +75,48 @@ class WeatherMatrixDisplay:
                 self.font = graphics.Font()
                 try:
                     logging.info(f"Attempting to load font: {font_path}")
-                    if not self.font.LoadFont(font_path):
-                        logging.warning(f"LoadFont returned False for {font_path}")
-                        print(f"Warning: LoadFont returned False for {font_path}")
-                        
-                        # Try fallback: rgbmatrix fonts directory
-                        fallback_paths = [
-                            os.path.expanduser("~/rpi-rgb-led-matrix/fonts/7x13.bdf"),
-                            "/home/dietpi/rpi-rgb-led-matrix/fonts/7x13.bdf",
-                            "/usr/local/share/fonts/7x13.bdf",
-                        ]
-                        
-                        for fallback in fallback_paths:
-                            if os.path.exists(fallback):
-                                logging.info(f"Trying fallback font: {fallback}")
-                                if self.font.LoadFont(fallback):
-                                    logging.info(f"Successfully loaded fallback font: {fallback}")
-                                    print(f"Successfully loaded fallback font: {fallback}")
-                                    break
-                                else:
-                                    logging.warning(f"Fallback font also failed: {fallback}")
-                        else:
-                            # No fallback worked
-                            logging.error("All font loading attempts failed - text will not render")
-                            self.font = None
-                    else:
-                        logging.info(f"Successfully loaded font: {font_path}")
-                        print(f"Successfully loaded font: {font_path}")
+                    # LoadFont returns None on success, raises Exception on failure
+                    self.font.LoadFont(font_path)
+                    logging.info(f"Successfully loaded font: {font_path}")
+                    print(f"Successfully loaded font: {font_path}")
                 except Exception as e:
-                    logging.error(f"Exception loading font {font_path}: {e}", exc_info=True)
-                    print(f"Error loading font {font_path}: {e}")
-                    print(f"Font path exists: {os.path.exists(font_path)}")
-                    print(f"Font file readable: {os.access(font_path, os.R_OK)}")
-                    if os.path.exists(font_path):
-                        print(f"Font file size: {os.path.getsize(font_path)} bytes")
-                        # Try to read first line to verify it's a valid BDF file
-                        try:
-                            with open(font_path, 'r') as f:
-                                first_line = f.readline().strip()
-                                print(f"First line of font file: {first_line[:50]}")
-                                if not first_line.startswith('STARTFONT'):
-                                    print("Warning: Font file may not be a valid BDF file")
-                        except Exception as read_err:
-                            print(f"Error reading font file: {read_err}")
-                    self.font = None
+                    logging.warning(f"Failed to load font {font_path}: {e}")
+                    print(f"Warning: Failed to load font {font_path}: {e}")
+                    
+                    # Try fallback: rgbmatrix fonts directory
+                    fallback_paths = [
+                        os.path.expanduser("~/rpi-rgb-led-matrix/fonts/7x13.bdf"),
+                        "/home/dietpi/rpi-rgb-led-matrix/fonts/7x13.bdf",
+                        "/usr/local/share/fonts/7x13.bdf",
+                    ]
+                    
+                    fallback_tried = False
+                    for fallback in fallback_paths:
+                        if os.path.exists(fallback):
+                            fallback_tried = True
+                            logging.info(f"Trying fallback font: {fallback}")
+                            try:
+                                # Create a new Font object for each attempt
+                                fallback_font = graphics.Font()
+                                fallback_font.LoadFont(fallback)
+                                logging.info(f"Successfully loaded fallback font: {fallback}")
+                                print(f"Successfully loaded fallback font: {fallback}")
+                                self.font = fallback_font
+                                break
+                            except Exception as fallback_error:
+                                logging.warning(f"Fallback font also failed {fallback}: {fallback_error}")
+                        else:
+                            logging.debug(f"Fallback font path does not exist: {fallback}")
+                    
+                    if not fallback_tried:
+                        logging.warning("No fallback font paths found to try")
+                    
+                    if self.font is None:
+                        # No fallback worked
+                        logging.error("All font loading attempts failed - text will not render")
+                        logging.error("The display will continue but text will not be visible")
+                        logging.error("Check font file integrity and rgbmatrix library installation")
+                        self.font = None
     
     def run(self):
         """Main display loop."""
