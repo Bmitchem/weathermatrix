@@ -74,12 +74,36 @@ class WeatherMatrixDisplay:
                 
                 self.font = graphics.Font()
                 try:
+                    logging.info(f"Attempting to load font: {font_path}")
                     if not self.font.LoadFont(font_path):
+                        logging.warning(f"LoadFont returned False for {font_path}")
                         print(f"Warning: LoadFont returned False for {font_path}")
-                        self.font = None
+                        
+                        # Try fallback: rgbmatrix fonts directory
+                        fallback_paths = [
+                            os.path.expanduser("~/rpi-rgb-led-matrix/fonts/7x13.bdf"),
+                            "/home/dietpi/rpi-rgb-led-matrix/fonts/7x13.bdf",
+                            "/usr/local/share/fonts/7x13.bdf",
+                        ]
+                        
+                        for fallback in fallback_paths:
+                            if os.path.exists(fallback):
+                                logging.info(f"Trying fallback font: {fallback}")
+                                if self.font.LoadFont(fallback):
+                                    logging.info(f"Successfully loaded fallback font: {fallback}")
+                                    print(f"Successfully loaded fallback font: {fallback}")
+                                    break
+                                else:
+                                    logging.warning(f"Fallback font also failed: {fallback}")
+                        else:
+                            # No fallback worked
+                            logging.error("All font loading attempts failed - text will not render")
+                            self.font = None
                     else:
+                        logging.info(f"Successfully loaded font: {font_path}")
                         print(f"Successfully loaded font: {font_path}")
                 except Exception as e:
+                    logging.error(f"Exception loading font {font_path}: {e}", exc_info=True)
                     print(f"Error loading font {font_path}: {e}")
                     print(f"Font path exists: {os.path.exists(font_path)}")
                     print(f"Font file readable: {os.access(font_path, os.R_OK)}")
