@@ -305,7 +305,7 @@ def parse_args():
     parser.add_argument(
         "--font",
         default=None,
-        help="Path to BDF font file"
+        help="Path to BDF font file (default: fonts/7x13.bdf in project directory)"
     )
     parser.add_argument(
         "--backend",
@@ -360,17 +360,14 @@ def main():
         # Default font path if not specified
         font_path = args.font
         if not font_path and args.backend == "pi":
-            # Try to find a default font
-            possible_fonts = [
-                "../rpi-rgb-led-matrix-master/fonts/7x13.bdf",
-                "../rpi-rgb-led-matrix-master/fonts/8x13.bdf",
-                "fonts/7x13.bdf",
-                "fonts/8x13.bdf",
-            ]
-            for path in possible_fonts:
-                if os.path.exists(path):
-                    font_path = path
-                    break
+            # Use local font file
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            default_font = os.path.join(script_dir, "fonts", "7x13.bdf")
+            if os.path.exists(default_font):
+                font_path = default_font
+            else:
+                print(f"Warning: Default font not found at {default_font}")
+                print("Font rendering may not work correctly.")
         
         # Create and run display
         display = WeatherMatrixDisplay(
