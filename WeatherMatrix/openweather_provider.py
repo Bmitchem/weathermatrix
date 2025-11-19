@@ -1,4 +1,5 @@
 """OpenWeather Current Weather API provider implementation."""
+import logging
 import requests
 from typing import Optional
 from weather_provider import WeatherProviderBase, WeatherProviderError
@@ -61,20 +62,32 @@ class OpenWeatherProvider(WeatherProviderBase):
         }
         
         try:
+            logging.info(f"Making OpenWeather API request: {self.BASE_URL}")
+            logging.debug(f"Request parameters: lat={self.lat}, lon={self.lon}, units={self.units}, lang={self.lang}")
+            
             response = requests.get(self.BASE_URL, params=params, timeout=self.timeout)
+            
+            logging.info(f"API response status: {response.status_code}")
+            logging.debug(f"Response headers: {dict(response.headers)}")
             
             # Check HTTP status
             if not response.ok:
+                logging.error(f"API request failed with status {response.status_code}")
                 self._handle_error_response(response)
             
             data = response.json()
+            logging.debug(f"API response data keys: {list(data.keys())}")
+            # Log full response in debug mode (truncated for readability)
+            logging.debug(f"API response (truncated): {str(data)[:500]}...")
             
             # Current Weather API returns data directly (not nested in "current")
             # Extract weather array (usually has one element)
             weather_array = data.get("weather", [])
             if not weather_array:
+                logging.error("Response missing 'weather' array")
                 raise WeatherProviderError("Response missing 'weather' array")
             weather = weather_array[0]
+            logging.debug(f"Weather condition: {weather.get('main')} - {weather.get('description')}")
             
             # Extract main data block
             main_data = data.get("main", {})
@@ -103,7 +116,7 @@ class OpenWeatherProvider(WeatherProviderBase):
             cloudiness = clouds_data.get("all") if clouds_data else None
             
             # Map to WeatherData
-            return WeatherData(
+            weather_data = WeatherData(
                 temp=main_data.get("temp", 0.0),
                 feels_like=main_data.get("feels_like", 0.0),
                 humidity=main_data.get("humidity", 0.0),
@@ -119,9 +132,14 @@ class OpenWeatherProvider(WeatherProviderBase):
                 cloudiness=cloudiness,
             )
             
+            logging.info(f"Successfully parsed weather data: {weather_data.temp}°C, {weather_data.condition_main}")
+            return weather_data
+            
         except requests.exceptions.RequestException as e:
+            logging.error(f"Network error during API request: {e}")
             raise WeatherProviderError(f"Network error: {str(e)}")
         except (KeyError, ValueError, TypeError) as e:
+            logging.error(f"Failed to parse API response: {e}", exc_info=True)
             raise WeatherProviderError(f"Failed to parse response: {str(e)}")
     
     def _handle_error_response(self, response: requests.Response) -> None:
@@ -132,6 +150,8 @@ class OpenWeatherProvider(WeatherProviderBase):
             message = error_data.get("message", "Unknown error")
             parameters = error_data.get("parameters", [])
             
+            logging.error(f"OpenWeather API error response: {error_data}")
+            
             error_msg = f"OpenWeather API error {cod}: {message}"
             if parameters:
                 error_msg += f" (parameters: {', '.join(parameters)})"
@@ -139,6 +159,7 @@ class OpenWeatherProvider(WeatherProviderBase):
             raise WeatherProviderError(error_msg)
         except ValueError:
             # Not JSON, use HTTP status
+            logging.error(f"Non-JSON error response: HTTP {response.status_code}, body: {response.text[:500]}")
             raise WeatherProviderError(
                 f"HTTP {response.status_code}: {response.text[:200]}"
             )

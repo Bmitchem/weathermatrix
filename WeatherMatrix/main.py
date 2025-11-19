@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Main entry point for weather matrix display."""
 import argparse
+import logging
 import os
 import signal
 import sys
@@ -60,17 +61,50 @@ class WeatherMatrixDisplay:
             # Ensure font_path is absolute
             if not os.path.isabs(font_path):
                 font_path = os.path.abspath(font_path)
-            self.font = graphics.Font()
-            if not self.font.LoadFont(font_path):
-                print(f"Warning: Could not load font {font_path}")
-                print(f"Font path exists: {os.path.exists(font_path)}")
-                self.font = None
+            
+            # Verify font file exists and is readable
+            if not os.path.exists(font_path):
+                print(f"Error: Font file does not exist: {font_path}")
+            elif not os.access(font_path, os.R_OK):
+                print(f"Error: Font file is not readable: {font_path}")
+            else:
+                # Verify it's a BDF file (check extension and first few bytes)
+                if not font_path.lower().endswith('.bdf'):
+                    print(f"Warning: Font file does not have .bdf extension: {font_path}")
+                
+                self.font = graphics.Font()
+                try:
+                    if not self.font.LoadFont(font_path):
+                        print(f"Warning: LoadFont returned False for {font_path}")
+                        self.font = None
+                    else:
+                        print(f"Successfully loaded font: {font_path}")
+                except Exception as e:
+                    print(f"Error loading font {font_path}: {e}")
+                    print(f"Font path exists: {os.path.exists(font_path)}")
+                    print(f"Font file readable: {os.access(font_path, os.R_OK)}")
+                    if os.path.exists(font_path):
+                        print(f"Font file size: {os.path.getsize(font_path)} bytes")
+                        # Try to read first line to verify it's a valid BDF file
+                        try:
+                            with open(font_path, 'r') as f:
+                                first_line = f.readline().strip()
+                                print(f"First line of font file: {first_line[:50]}")
+                                if not first_line.startswith('STARTFONT'):
+                                    print("Warning: Font file may not be a valid BDF file")
+                        except Exception as read_err:
+                            print(f"Error reading font file: {read_err}")
+                    self.font = None
     
     def run(self):
         """Main display loop."""
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
         
+        logging.info("Weather Matrix Display starting...")
+        logging.info(f"Backend: {self.backend}")
+        logging.info(f"Canvas size: {self.canvas.width}x{self.canvas.height}")
+        logging.info(f"Font loaded: {self.font is not None}")
         print("Weather Matrix Display starting...")
         print("Press CTRL-C to stop")
         
@@ -80,10 +114,17 @@ class WeatherMatrixDisplay:
             offscreen_canvas = self.canvas._matrix.CreateFrameCanvas()
         
         try:
+            frame_count = 0
             while self.running:
                 try:
+                    frame_count += 1
+                    logging.debug(f"Frame {frame_count}: Fetching weather data...")
+                    
                     # Get latest weather data (uses cache if fresh)
                     weather = self.weather_service.get_latest()
+                    
+                    logging.info(f"Frame {frame_count}: Weather data - Temp: {weather.temp}°C, Condition: {weather.condition_main}, "
+                                f"Humidity: {weather.humidity}%, Wind: {weather.wind_speed} m/s")
                     
                     # Render to canvas
                     if self.backend == "pi" and MATRIX_AVAILABLE and offscreen_canvas:
@@ -113,8 +154,10 @@ class WeatherMatrixDisplay:
                         
                         # Swap buffers
                         offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
+                        logging.debug(f"Frame {frame_count}: Rendered and swapped buffers")
                     else:
                         # Fake/PIL backend or no double buffering
+                        logging.debug(f"Frame {frame_count}: Rendering to {self.backend} backend...")
                         render_weather(
                             self.canvas,
                             weather,
@@ -123,11 +166,14 @@ class WeatherMatrixDisplay:
                         )
                         # Print ASCII representation if fake canvas
                         if isinstance(self.canvas, FakeMatrixCanvas):
-                            print("\n" + self.canvas.to_ascii())
+                            if frame_count % 10 == 1:  # Print every 10th frame to reduce spam
+                                print(f"\nFrame {frame_count}:")
+                                print(self.canvas.to_ascii())
                         # Save PNG if PIL canvas
                         elif isinstance(self.canvas, PILCanvas):
                             output_file = getattr(self, "_output_file", "weather_output.png")
                             self.canvas.save(output_file)
+                            logging.info(f"Saved weather display to {output_file}")
                             print(f"Saved weather display to {output_file}")
                             # Only render once for PNG output
                             self.running = False
@@ -136,8 +182,10 @@ class WeatherMatrixDisplay:
                     time.sleep(1.0)
                     
                 except KeyboardInterrupt:
+                    logging.info("Interrupted by user")
                     break
                 except Exception as e:
+                    logging.error(f"Error in display loop (frame {frame_count}): {e}", exc_info=True)
                     print(f"Error in display loop: {e}", file=sys.stderr)
                     time.sleep(5.0)  # Wait before retrying
                     
@@ -151,8 +199,11 @@ class WeatherMatrixDisplay:
     
     def cleanup(self):
         """Clean up resources."""
+        logging.info("Cleaning up resources...")
         if self.canvas:
             self.canvas.clear()
+            logging.debug("Canvas cleared")
+        logging.info("Cleanup complete")
         print("Cleanup complete")
 
 
@@ -322,6 +373,11 @@ def parse_args():
         default="weather_output.png",
         help="Output PNG filename when using --backend=png (default: weather_output.png)"
     )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose logging (DEBUG level)"
+    )
     
     # Matrix hardware options (mirroring samplebase.py)
     parser.add_argument("-r", "--led-rows", type=int, default=32, help="Display rows")
@@ -346,20 +402,49 @@ def parse_args():
     return parser.parse_args()
 
 
+def setup_logging(verbose: bool = False):
+    """Configure logging for the application."""
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+
 def main():
     """Main entry point."""
     args = parse_args()
     
+    # Setup logging
+    setup_logging(verbose=args.verbose)
+    
+    logging.info("=" * 60)
+    logging.info("Weather Matrix Display Starting")
+    logging.info("=" * 60)
+    
     try:
+        logging.info(f"Configuration:")
+        logging.info(f"  Provider: {args.provider}")
+        logging.info(f"  Location: lat={args.lat or os.environ.get('WEATHER_LAT', 'N/A')}, lon={args.lon or os.environ.get('WEATHER_LON', 'N/A')}")
+        logging.info(f"  Units: {args.units or 'metric'}")
+        logging.info(f"  Cache TTL: {args.cache_ttl}s")
+        logging.info(f"  Backend: {args.backend}")
+        logging.info(f"  Matrix: {args.led_rows}x{args.led_cols}")
+        
         # Create weather provider and service
         provider = create_weather_provider(args)
+        logging.info("Weather provider created successfully")
+        
         weather_service = WeatherService(
             provider=provider,
             cache_ttl_seconds=args.cache_ttl
         )
+        logging.info(f"Weather service initialized (cache TTL: {args.cache_ttl}s)")
         
         # Create matrix canvas
         canvas = create_matrix_canvas(args, args.backend)
+        logging.info(f"Matrix canvas created: {canvas.width}x{canvas.height}")
         
         # Default font path if not specified
         font_path = args.font
