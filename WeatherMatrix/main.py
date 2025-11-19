@@ -57,9 +57,13 @@ class WeatherMatrixDisplay:
         # Load font if available
         self.font = None
         if MATRIX_AVAILABLE and font_path and backend == "pi":
+            # Ensure font_path is absolute
+            if not os.path.isabs(font_path):
+                font_path = os.path.abspath(font_path)
             self.font = graphics.Font()
             if not self.font.LoadFont(font_path):
                 print(f"Warning: Could not load font {font_path}")
+                print(f"Font path exists: {os.path.exists(font_path)}")
                 self.font = None
     
     def run(self):
@@ -360,13 +364,16 @@ def main():
         # Default font path if not specified
         font_path = args.font
         if not font_path and args.backend == "pi":
-            # Use local font file
+            # Use local font file - resolve path relative to script location
             script_dir = os.path.dirname(os.path.abspath(__file__))
             default_font = os.path.join(script_dir, "fonts", "7x13.bdf")
+            # Normalize and make absolute
+            default_font = os.path.abspath(os.path.normpath(default_font))
             if os.path.exists(default_font):
                 font_path = default_font
             else:
                 print(f"Warning: Default font not found at {default_font}")
+                print(f"Script directory: {script_dir}")
                 print("Font rendering may not work correctly.")
         
         # Create and run display
