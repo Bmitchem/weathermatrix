@@ -134,13 +134,23 @@ class WeatherMatrixDisplay:
         print("Press CTRL-C to stop")
         
         # Use double buffering for real matrix
+        # Access matrix directly like the samples do (not through wrapper)
+        matrix_direct = None
         offscreen_canvas = None
-        if self.backend == "pi" and MATRIX_AVAILABLE and hasattr(self.canvas, "_matrix"):
-            logging.info(f"Creating offscreen canvas from matrix (width={self.canvas._matrix.width}, height={self.canvas._matrix.height})")
-            offscreen_canvas = self.canvas._matrix.CreateFrameCanvas()
-            logging.info(f"Offscreen canvas created: {offscreen_canvas}")
-            if offscreen_canvas:
-                logging.info(f"Offscreen canvas dimensions: {offscreen_canvas.width}x{offscreen_canvas.height}")
+        if self.backend == "pi" and MATRIX_AVAILABLE:
+            if hasattr(self.canvas, "_matrix_direct"):
+                matrix_direct = self.canvas._matrix_direct
+            elif hasattr(self.canvas, "_matrix"):
+                matrix_direct = self.canvas._matrix
+            else:
+                logging.error("Cannot find matrix instance!")
+            
+            if matrix_direct:
+                logging.info(f"Creating offscreen canvas from matrix (width={matrix_direct.width}, height={matrix_direct.height})")
+                offscreen_canvas = matrix_direct.CreateFrameCanvas()
+                logging.info(f"Offscreen canvas created: {offscreen_canvas}")
+                if offscreen_canvas:
+                    logging.info(f"Offscreen canvas dimensions: {offscreen_canvas.width}x{offscreen_canvas.height}")
         
         try:
             # Startup indicator: Draw a green square to show the app is running
@@ -152,7 +162,7 @@ class WeatherMatrixDisplay:
                 test_start = time.time()
                 while (time.time() - test_start) < test_duration and self.running:
                     offscreen_canvas.Fill(255, 0, 0)
-                    offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
+                    offscreen_canvas = matrix_direct.SwapOnVSync(offscreen_canvas)
                     time.sleep(0.05)  # Small delay between swaps
                 
                 if not self.running:
@@ -176,7 +186,7 @@ class WeatherMatrixDisplay:
                     for y in range(start_y, start_y + square_size):
                         for x in range(start_x, start_x + square_size):
                             offscreen_canvas.SetPixel(x, y, 0, 255, 0)
-                    offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
+                    offscreen_canvas = matrix_direct.SwapOnVSync(offscreen_canvas)
                     time.sleep(sleep_interval)
                     elapsed += sleep_interval
                 if not self.running:
@@ -197,7 +207,7 @@ class WeatherMatrixDisplay:
                                 f"Humidity: {weather.humidity}%, Wind: {weather.wind_speed} m/s")
                     
                     # Render to canvas
-                    if self.backend == "pi" and MATRIX_AVAILABLE and offscreen_canvas:
+                    if self.backend == "pi" and MATRIX_AVAILABLE and offscreen_canvas and matrix_direct:
                         # Use double buffering for smooth updates
                         logging.info(f"Frame {frame_count}: Using double buffering, clearing offscreen canvas")
                         offscreen_canvas.Clear()
@@ -245,7 +255,7 @@ class WeatherMatrixDisplay:
                         logging.info(f"Frame {frame_count}: Drew {text_drawn_count} text strings")
                         
                         # Swap buffers
-                        offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
+                        offscreen_canvas = matrix_direct.SwapOnVSync(offscreen_canvas)
                         logging.info(f"Frame {frame_count}: Rendered and swapped buffers")
                     else:
                         # Fake/PIL backend or no double buffering
@@ -396,7 +406,11 @@ def create_matrix_canvas(args, backend: str) -> MatrixCanvas:
             options.drop_privileges = True
         
         matrix = RGBMatrix(options=options)
-        return RealMatrixCanvas(matrix)
+        # Store the matrix directly for easier access (like the samples do)
+        # Also return wrapped version for compatibility
+        canvas = RealMatrixCanvas(matrix)
+        canvas._matrix_direct = matrix  # Store direct reference
+        return canvas
     
     else:
         raise ValueError(f"Unknown backend: {backend}")

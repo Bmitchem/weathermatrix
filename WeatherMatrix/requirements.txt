@@ -10,4 +10,5 @@ Pillow>=10.0.0            # Image processing for PNG backend (optional, for test
 # Development/testing dependencies (optional)
 pytest>=7.4.0
 pytest-mock>=3.11.0
+pytest-cov>=4.1.0  # Coverage reporting
 
