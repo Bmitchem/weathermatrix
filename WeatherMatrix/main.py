@@ -50,7 +50,7 @@ from openweather_provider import OpenWeatherProvider
 from weather_provider import WeatherProviderError
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_FONT = os.path.join(BASE_DIR, "fonts", "7x13.bdf")
+DEFAULT_FONT = os.path.join(BASE_DIR, "fonts", "6x10.bdf")
 DEFAULT_LOG_FILE = os.path.join(BASE_DIR, "weather-matrix.log")
 
 
