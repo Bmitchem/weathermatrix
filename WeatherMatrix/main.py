@@ -192,21 +192,27 @@ def draw_weather(matrix: RGBMatrix, font: graphics.Font, weather) -> None:
     third_line = second_line + font.height + 2
 
     x = 2
-    x += graphics.DrawText(matrix, font, x, baseline, temp_color, temp_text)
-    x += 4
-    graphics.DrawText(matrix, font, x, baseline, condition_color, condition_text)
+    temp_width = graphics.DrawText(matrix, font, x, baseline, temp_color, temp_text)
+    logging.info("DrawText temp='%s' x=%s y=%s width=%s", temp_text, x, baseline, temp_width)
+    x += temp_width + 4
+    cond_width = graphics.DrawText(matrix, font, x, baseline, condition_color, condition_text)
+    logging.info("DrawText condition='%s' x=%s y=%s width=%s", condition_text, x, baseline, cond_width)
 
-    graphics.DrawText(matrix, font, 2, second_line, info_color, info_text)
+    info_width = graphics.DrawText(matrix, font, 2, second_line, info_color, info_text)
+    logging.info("DrawText info='%s' x=2 y=%s width=%s", info_text, second_line, info_width)
 
     timestamp_text = time.strftime("%H:%M:%S", time.localtime(weather.timestamp or time.time()))
-    graphics.DrawText(matrix, font, 2, third_line, info_color, f"Updated {timestamp_text}")
+    ts_width = graphics.DrawText(matrix, font, 2, third_line, info_color, f"Updated {timestamp_text}")
+    logging.info("DrawText timestamp='%s' x=2 y=%s width=%s", timestamp_text, third_line, ts_width)
 
 
 def draw_status(matrix: RGBMatrix, font: graphics.Font, message: str, color=None) -> None:
     matrix.Clear()
     color = color or graphics.Color(255, 165, 0)
     baseline = font.baseline
-    graphics.DrawText(matrix, font, 2, baseline, color, message[:32])
+    msg = message[:32]
+    width = graphics.DrawText(matrix, font, 2, baseline, color, msg)
+    logging.info("DrawStatus '%s' width=%s baseline=%s", msg, width, baseline)
 
 
 def weather_loop(matrix, font, service: WeatherService, args: argparse.Namespace) -> None:
