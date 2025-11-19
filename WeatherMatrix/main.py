@@ -78,7 +78,9 @@ class WeatherMatrixDisplay:
                     # LoadFont returns None on success, raises Exception on failure
                     self.font.LoadFont(font_path)
                     logging.info(f"Successfully loaded font: {font_path}")
+                    logging.info(f"Font height: {self.font.height}, baseline: {self.font.baseline}")
                     print(f"Successfully loaded font: {font_path}")
+                    print(f"Font height: {self.font.height}, baseline: {self.font.baseline}")
                 except Exception as e:
                     logging.warning(f"Failed to load font {font_path}: {e}")
                     print(f"Warning: Failed to load font {font_path}: {e}")
@@ -88,6 +90,7 @@ class WeatherMatrixDisplay:
                         os.path.expanduser("~/rpi-rgb-led-matrix/fonts/7x13.bdf"),
                         "/home/dietpi/rpi-rgb-led-matrix/fonts/7x13.bdf",
                         "/usr/local/share/fonts/7x13.bdf",
+                        "/home/dietpi/weathermatrix/WeatherMatrix/rpi-rgb-led-matrix/fonts/7x13.bdf"
                     ]
                     
                     fallback_tried = False
@@ -157,22 +160,35 @@ class WeatherMatrixDisplay:
                         from layout import calculate_layout
                         ops = calculate_layout(weather, self.canvas.width, self.canvas.height)
                         
+                        logging.debug(f"Frame {frame_count}: Generated {len(ops)} drawing operations")
+                        
                         # Draw on offscreen canvas
-                        for op in ops:
+                        for i, op in enumerate(ops):
                             if op.op_type == "text" and self.font:
+                                logging.debug(f"Frame {frame_count}: Drawing text '{op.kwargs['text']}' at ({op.kwargs['x']}, {op.kwargs['y']}) "
+                                            f"color=({op.kwargs['r']}, {op.kwargs['g']}, {op.kwargs['b']})")
                                 color = graphics.Color(
                                     op.kwargs["r"],
                                     op.kwargs["g"],
                                     op.kwargs["b"]
                                 )
-                                graphics.DrawText(
-                                    offscreen_canvas,
-                                    self.font,
-                                    op.kwargs["x"],
-                                    op.kwargs["y"],
-                                    color,
-                                    op.kwargs["text"]
-                                )
+                                try:
+                                    graphics.DrawText(
+                                        offscreen_canvas,
+                                        self.font,
+                                        op.kwargs["x"],
+                                        op.kwargs["y"],
+                                        color,
+                                        op.kwargs["text"]
+                                    )
+                                    logging.debug(f"Frame {frame_count}: Successfully called DrawText for '{op.kwargs['text']}'")
+                                except Exception as draw_error:
+                                    logging.error(f"Frame {frame_count}: Error calling DrawText: {draw_error}", exc_info=True)
+                            else:
+                                if op.op_type == "text":
+                                    logging.warning(f"Frame {frame_count}: Skipping text operation - font={self.font is not None}, op_type={op.op_type}")
+                                else:
+                                    logging.debug(f"Frame {frame_count}: Skipping non-text operation: {op.op_type}")
                         
                         # Swap buffers
                         offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
