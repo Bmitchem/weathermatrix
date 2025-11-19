@@ -1,6 +1,13 @@
-requests>=2.31.0
+# Core dependencies for weather matrix display
+requests>=2.31.0          # HTTP client for OpenWeather API
+python-dotenv>=1.0.0      # Load environment variables from .env file
+Pillow>=10.0.0            # Image processing for PNG backend (optional, for testing)
+
+# Note: rgbmatrix library is required for actual hardware display
+# Install separately: https://github.com/hzeller/rpi-rgb-led-matrix
+# This is typically built from source on the Raspberry Pi, not via pip
+
+# Development/testing dependencies (optional)
 pytest>=7.4.0
 pytest-mock>=3.11.0
-python-dotenv>=1.0.0
-Pillow>=10.0.0
 
