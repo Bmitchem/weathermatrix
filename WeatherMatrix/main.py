@@ -154,18 +154,21 @@ class WeatherMatrixDisplay:
                     # Render to canvas
                     if self.backend == "pi" and MATRIX_AVAILABLE and offscreen_canvas:
                         # Use double buffering for smooth updates
+                        logging.info(f"Frame {frame_count}: Using double buffering, clearing offscreen canvas")
                         offscreen_canvas.Clear()
                         
                         # Get layout operations
                         from layout import calculate_layout
+                        logging.info(f"Frame {frame_count}: Calculating layout for canvas size {self.canvas.width}x{self.canvas.height}")
                         ops = calculate_layout(weather, self.canvas.width, self.canvas.height)
                         
-                        logging.debug(f"Frame {frame_count}: Generated {len(ops)} drawing operations")
+                        logging.info(f"Frame {frame_count}: Generated {len(ops)} drawing operations")
                         
                         # Draw on offscreen canvas
+                        text_drawn_count = 0
                         for i, op in enumerate(ops):
                             if op.op_type == "text" and self.font:
-                                logging.debug(f"Frame {frame_count}: Drawing text '{op.kwargs['text']}' at ({op.kwargs['x']}, {op.kwargs['y']}) "
+                                logging.info(f"Frame {frame_count}: Drawing text '{op.kwargs['text']}' at ({op.kwargs['x']}, {op.kwargs['y']}) "
                                             f"color=({op.kwargs['r']}, {op.kwargs['g']}, {op.kwargs['b']})")
                                 color = graphics.Color(
                                     op.kwargs["r"],
@@ -181,7 +184,8 @@ class WeatherMatrixDisplay:
                                         color,
                                         op.kwargs["text"]
                                     )
-                                    logging.debug(f"Frame {frame_count}: Successfully called DrawText for '{op.kwargs['text']}'")
+                                    text_drawn_count += 1
+                                    logging.info(f"Frame {frame_count}: Successfully called DrawText for '{op.kwargs['text']}' (total drawn: {text_drawn_count})")
                                 except Exception as draw_error:
                                     logging.error(f"Frame {frame_count}: Error calling DrawText: {draw_error}", exc_info=True)
                             else:
@@ -190,11 +194,14 @@ class WeatherMatrixDisplay:
                                 else:
                                     logging.debug(f"Frame {frame_count}: Skipping non-text operation: {op.op_type}")
                         
+                        logging.info(f"Frame {frame_count}: Drew {text_drawn_count} text strings")
+                        
                         # Swap buffers
                         offscreen_canvas = self.canvas._matrix.SwapOnVSync(offscreen_canvas)
-                        logging.debug(f"Frame {frame_count}: Rendered and swapped buffers")
+                        logging.info(f"Frame {frame_count}: Rendered and swapped buffers")
                     else:
                         # Fake/PIL backend or no double buffering
+                        logging.warning(f"Frame {frame_count}: Not using double buffering - backend={self.backend}, MATRIX_AVAILABLE={MATRIX_AVAILABLE}, offscreen_canvas={offscreen_canvas is not None}")
                         logging.debug(f"Frame {frame_count}: Rendering to {self.backend} backend...")
                         render_weather(
                             self.canvas,
