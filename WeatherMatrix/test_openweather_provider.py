@@ -10,37 +10,31 @@ from weather_data import WeatherData
 def sample_openweather_response():
     """Sample OpenWeather API response."""
     return {
-        "lat": 33.44,
-        "lon": -94.04,
-        "timezone": "America/Chicago",
-        "timezone_offset": -18000,
-        "current": {
-            "dt": 1684929490,
-            "sunrise": 1684926645,
-            "sunset": 1684977332,
+        "coord": {"lon": -94.04, "lat": 33.44},
+        "weather": [
+            {
+                "id": 803,
+                "main": "Clouds",
+                "description": "broken clouds",
+                "icon": "04d"
+            }
+        ],
+        "base": "stations",
+        "main": {
             "temp": 292.55,
             "feels_like": 292.87,
             "pressure": 1014,
-            "humidity": 89,
-            "dew_point": 290.69,
-            "uvi": 0.16,
-            "clouds": 53,
-            "visibility": 10000,
-            "wind_speed": 3.13,
-            "wind_deg": 93,
-            "wind_gust": 6.71,
-            "weather": [
-                {
-                    "id": 803,
-                    "main": "Clouds",
-                    "description": "broken clouds",
-                    "icon": "04d"
-                }
-            ],
-            "rain": {
-                "1h": 2.93
-            }
-        }
+            "humidity": 89
+        },
+        "visibility": 10000,
+        "wind": {"speed": 3.13, "deg": 93},
+        "rain": {"1h": 2.93},
+        "clouds": {"all": 53},
+        "dt": 1684929490,
+        "sys": {"country": "US"},
+        "timezone": -18000,
+        "name": "Testville",
+        "id": 123
     }
 
 
@@ -81,22 +75,21 @@ def test_openweather_provider_success(provider, sample_openweather_response):
 def test_openweather_provider_no_precipitation(provider):
     """Test parsing response without precipitation."""
     response = {
-        "lat": 33.44,
-        "lon": -94.04,
-        "timezone_offset": -18000,
-        "current": {
-            "dt": 1684929490,
+        "coord": {"lon": -94.04, "lat": 33.44},
+        "weather": [
+            {
+                "main": "Clear",
+                "description": "clear sky"
+            }
+        ],
+        "main": {
             "temp": 20.5,
             "feels_like": 19.8,
-            "humidity": 65,
-            "wind_speed": 5.2,
-            "weather": [
-                {
-                    "main": "Clear",
-                    "description": "clear sky"
-                }
-            ]
-        }
+            "humidity": 65
+        },
+        "wind": {"speed": 5.2},
+        "dt": 1684929490,
+        "timezone": -18000
     }
     
     with patch('openweather_provider.requests.get') as mock_get:
@@ -114,25 +107,24 @@ def test_openweather_provider_no_precipitation(provider):
 def test_openweather_provider_snow(provider):
     """Test parsing response with snow."""
     response = {
-        "lat": 33.44,
-        "lon": -94.04,
-        "timezone_offset": -18000,
-        "current": {
-            "dt": 1684929490,
+        "coord": {"lon": -94.04, "lat": 33.44},
+        "weather": [
+            {
+                "main": "Snow",
+                "description": "light snow"
+            }
+        ],
+        "main": {
             "temp": -5.0,
             "feels_like": -8.0,
-            "humidity": 80,
-            "wind_speed": 10.0,
-            "weather": [
-                {
-                    "main": "Snow",
-                    "description": "light snow"
-                }
-            ],
-            "snow": {
-                "1h": 1.2
-            }
-        }
+            "humidity": 80
+        },
+        "wind": {"speed": 10.0},
+        "snow": {
+            "1h": 1.2
+        },
+        "dt": 1684929490,
+        "timezone": -18000
     }
     
     with patch('openweather_provider.requests.get') as mock_get:
@@ -178,10 +170,15 @@ def test_openweather_provider_network_error(provider):
 
 
 def test_openweather_provider_missing_current(provider):
-    """Test handling of missing 'current' block."""
+    """Test handling of missing main block."""
     response = {
-        "lat": 33.44,
-        "lon": -94.04
+        "coord": {"lon": -94.04, "lat": 33.44},
+        "weather": [
+            {
+                "main": "Clear",
+                "description": "clear sky"
+            }
+        ]
     }
     
     with patch('openweather_provider.requests.get') as mock_get:
@@ -193,19 +190,17 @@ def test_openweather_provider_missing_current(provider):
         with pytest.raises(WeatherProviderError) as exc_info:
             provider.get_current()
         
-        assert "missing 'current' block" in str(exc_info.value)
+        assert "missing 'main' block" in str(exc_info.value)
 
 
 def test_openweather_provider_missing_weather(provider):
     """Test handling of missing 'weather' array."""
     response = {
-        "lat": 33.44,
-        "lon": -94.04,
-        "timezone_offset": -18000,
-        "current": {
-            "dt": 1684929490,
-            "temp": 20.0
-        }
+        "coord": {"lon": -94.04, "lat": 33.44},
+        "main": {"temp": 20.0},
+        "dt": 1684929490,
+        "timezone": -18000,
+        "weather": []
     }
     
     with patch('openweather_provider.requests.get') as mock_get:

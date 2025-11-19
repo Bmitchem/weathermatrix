@@ -11,12 +11,22 @@ class MockProvider(WeatherProviderBase):
     """Mock weather provider for testing."""
     
     def __init__(self, return_data=None, raise_error=None):
+        object.__setattr__(self, "_get_current_override", None)
         self.return_data = return_data
         self.raise_error = raise_error
         self.call_count = 0
     
+    def __setattr__(self, name, value):
+        if name == "get_current" and callable(value):
+            object.__setattr__(self, "_get_current_override", value)
+        else:
+            object.__setattr__(self, name, value)
+    
     def get_current(self):
         self.call_count += 1
+        override = getattr(self, "_get_current_override", None)
+        if override:
+            return override()
         if self.raise_error:
             raise self.raise_error
         return self.return_data

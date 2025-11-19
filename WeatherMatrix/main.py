@@ -1,595 +1,271 @@
-#!/usr/bin/env python3
-"""Main entry point for weather matrix display."""
+"""Metro-style weather display for the RGB matrix."""
 import argparse
 import logging
 import os
 import signal
 import sys
 import time
-from typing import Optional
+from typing import Tuple
 
-# Load environment variables from .env file if it exists
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    # dotenv not installed, skip loading .env file
-    pass
+from dotenv import load_dotenv
 
-# Try to import matrix libraries (will fail gracefully if not available)
 try:
     from rgbmatrix import RGBMatrix, RGBMatrixOptions, graphics
-    MATRIX_AVAILABLE = True
-except ImportError:
-    MATRIX_AVAILABLE = False
-    print("Warning: rgbmatrix not available. Use --backend=fake for testing.")
+except ImportError:  # pragma: no cover - fallback used in tests/local dev
+    class _GraphicsStub:  # pylint: disable=too-few-public-methods
+        """Minimal graphics stub so tests can patch attributes."""
 
-from weather_provider import WeatherProviderBase
-from openweather_provider import OpenWeatherProvider
+        class Font:  # pylint: disable=too-few-public-methods
+            def __init__(self):
+                self.height = 0
+                self.baseline = 0
+
+            def LoadFont(self, *_args, **_kwargs):
+                raise RuntimeError("rgbmatrix not installed")
+
+        @staticmethod
+        def Color(r, g, b):
+            return (r, g, b)
+
+        @staticmethod
+        def DrawText(*_args, **_kwargs):
+            raise RuntimeError("rgbmatrix not installed")
+
+    class _MatrixStub:  # pylint: disable=too-few-public-methods
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("rgbmatrix not installed")
+
+        def Clear(self):  # pragma: no cover
+            pass
+
+    class _OptionsStub:  # pylint: disable=too-few-public-methods
+        pass
+
+    RGBMatrix = _MatrixStub  # type: ignore[assignment]
+    RGBMatrixOptions = _OptionsStub  # type: ignore[assignment]
+    graphics = _GraphicsStub()  # type: ignore[assignment]
+
 from weather_service import WeatherService
-from matrix_canvas import MatrixCanvas, RealMatrixCanvas, FakeMatrixCanvas, PILCanvas
-from layout import render_weather
+from openweather_provider import OpenWeatherProvider
+from weather_provider import WeatherProviderError
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_FONT = os.path.join(BASE_DIR, "fonts", "7x13.bdf")
+DEFAULT_LOG_FILE = os.path.join(BASE_DIR, "weather-matrix.log")
 
 
-class WeatherMatrixDisplay:
-    """Main application class for weather matrix display."""
-    
-    def __init__(
-        self,
-        weather_service: WeatherService,
-        canvas: MatrixCanvas,
-        font_path: Optional[str] = None,
-        backend: str = "pi"
-    ):
-        """
-        Initialize weather matrix display.
-        
-        Args:
-            weather_service: Weather service instance
-            canvas: Matrix canvas (real or fake)
-            font_path: Path to BDF font file
-            backend: Backend type ("pi" or "fake")
-        """
-        self.weather_service = weather_service
-        self.canvas = canvas
-        self.backend = backend
-        self.running = True
-        
-        # Load font if available
-        self.font = None
-        if MATRIX_AVAILABLE and font_path and backend == "pi":
-            # Ensure font_path is absolute
-            if not os.path.isabs(font_path):
-                font_path = os.path.abspath(font_path)
-            
-            # Verify font file exists and is readable
-            if not os.path.exists(font_path):
-                print(f"Error: Font file does not exist: {font_path}")
-            elif not os.access(font_path, os.R_OK):
-                print(f"Error: Font file is not readable: {font_path}")
-            else:
-                # Verify it's a BDF file (check extension and first few bytes)
-                if not font_path.lower().endswith('.bdf'):
-                    print(f"Warning: Font file does not have .bdf extension: {font_path}")
-                
-                self.font = graphics.Font()
-                try:
-                    logging.info(f"Attempting to load font: {font_path}")
-                    # LoadFont returns None on success, raises Exception on failure
-                    self.font.LoadFont(font_path)
-                    logging.info(f"Successfully loaded font: {font_path}")
-                    logging.info(f"Font height: {self.font.height}, baseline: {self.font.baseline}")
-                    print(f"Successfully loaded font: {font_path}")
-                    print(f"Font height: {self.font.height}, baseline: {self.font.baseline}")
-                except Exception as e:
-                    logging.warning(f"Failed to load font {font_path}: {e}")
-                    print(f"Warning: Failed to load font {font_path}: {e}")
-                    
-                    # Try fallback: rgbmatrix fonts directory
-                    fallback_paths = [
-                        os.path.expanduser("~/rpi-rgb-led-matrix/fonts/7x13.bdf"),
-                        "/home/dietpi/rpi-rgb-led-matrix/fonts/7x13.bdf",
-                        "/usr/local/share/fonts/7x13.bdf",
-                        "/home/dietpi/weathermatrix/WeatherMatrix/rpi-rgb-led-matrix/fonts/7x13.bdf"
-                    ]
-                    
-                    fallback_tried = False
-                    for fallback in fallback_paths:
-                        if os.path.exists(fallback):
-                            fallback_tried = True
-                            logging.info(f"Trying fallback font: {fallback}")
-                            try:
-                                # Create a new Font object for each attempt
-                                fallback_font = graphics.Font()
-                                fallback_font.LoadFont(fallback)
-                                logging.info(f"Successfully loaded fallback font: {fallback}")
-                                print(f"Successfully loaded fallback font: {fallback}")
-                                self.font = fallback_font
-                                break
-                            except Exception as fallback_error:
-                                logging.warning(f"Fallback font also failed {fallback}: {fallback_error}")
-                        else:
-                            logging.debug(f"Fallback font path does not exist: {fallback}")
-                    
-                    if not fallback_tried:
-                        logging.warning("No fallback font paths found to try")
-                    
-                    if self.font is None:
-                        # No fallback worked
-                        logging.error("All font loading attempts failed - text will not render")
-                        logging.error("The display will continue but text will not be visible")
-                        logging.error("Check font file integrity and rgbmatrix library installation")
-                        self.font = None
-    
-    def run(self):
-        """Main display loop."""
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        
-        logging.info("Weather Matrix Display starting...")
-        logging.info(f"Backend: {self.backend}")
-        logging.info(f"Canvas size: {self.canvas.width}x{self.canvas.height}")
-        logging.info(f"Font loaded: {self.font is not None}")
-        print("Weather Matrix Display starting...")
-        print("Press CTRL-C to stop")
-        
-        # Use double buffering for real matrix
-        # Access matrix directly like the samples do (not through wrapper)
-        matrix_direct = None
-        offscreen_canvas = None
-        if self.backend == "pi" and MATRIX_AVAILABLE:
-            if hasattr(self.canvas, "_matrix_direct"):
-                matrix_direct = self.canvas._matrix_direct
-            elif hasattr(self.canvas, "_matrix"):
-                matrix_direct = self.canvas._matrix
-            else:
-                logging.error("Cannot find matrix instance!")
-            
-            if matrix_direct:
-                logging.info(f"Creating offscreen canvas from matrix (width={matrix_direct.width}, height={matrix_direct.height})")
-                offscreen_canvas = matrix_direct.CreateFrameCanvas()
-                logging.info(f"Offscreen canvas created: {offscreen_canvas}")
-                if offscreen_canvas:
-                    logging.info(f"Offscreen canvas dimensions: {offscreen_canvas.width}x{offscreen_canvas.height}")
-        
-        try:
-            # Startup indicator: Draw a green square to show the app is running
-            if self.backend == "pi" and MATRIX_AVAILABLE and offscreen_canvas:
-                logging.info("Drawing startup indicator (green square)...")
-                # First try Fill() to verify the matrix works - must swap continuously
-                logging.info("Filling canvas with red to test...")
-                test_duration = 2.0
-                test_start = time.time()
-                while (time.time() - test_start) < test_duration and self.running:
-                    offscreen_canvas.Fill(255, 0, 0)
-                    offscreen_canvas = matrix_direct.SwapOnVSync(offscreen_canvas)
-                    time.sleep(0.05)  # Small delay between swaps
-                
-                if not self.running:
-                    logging.info("Shutdown requested during test")
-                    return
-                
-                # Now draw a green square in the center
-                square_size = 8
-                start_x = (self.canvas.width - square_size) // 2
-                start_y = (self.canvas.height - square_size) // 2
-                logging.info(f"Drawing green square at ({start_x}, {start_y}), size {square_size}x{square_size}")
-                
-                logging.info("Startup indicator displayed. Waiting 30 seconds before fetching weather...")
-                # Break sleep into small chunks to allow signal handling and keep swapping buffer
-                wait_time = 30.0
-                sleep_interval = 0.05  # Check every 0.05 seconds and swap buffer
-                elapsed = 0.0
-                while elapsed < wait_time and self.running:
-                    # Clear and redraw the square each frame to keep it visible
-                    offscreen_canvas.Clear()
-                    for y in range(start_y, start_y + square_size):
-                        for x in range(start_x, start_x + square_size):
-                            offscreen_canvas.SetPixel(x, y, 0, 255, 0)
-                    offscreen_canvas = matrix_direct.SwapOnVSync(offscreen_canvas)
-                    time.sleep(sleep_interval)
-                    elapsed += sleep_interval
-                if not self.running:
-                    logging.info("Shutdown requested during startup wait")
-                    return
-                logging.info("30 seconds elapsed. Starting weather display...")
-            
-            frame_count = 0
-            while self.running:
-                try:
-                    frame_count += 1
-                    logging.debug(f"Frame {frame_count}: Fetching weather data...")
-                    
-                    # Get latest weather data (uses cache if fresh)
-                    weather = self.weather_service.get_latest()
-                    
-                    logging.info(f"Frame {frame_count}: Weather data - Temp: {weather.temp}°C, Condition: {weather.condition_main}, "
-                                f"Humidity: {weather.humidity}%, Wind: {weather.wind_speed} m/s")
-                    
-                    # Render to canvas
-                    if self.backend == "pi" and MATRIX_AVAILABLE and offscreen_canvas and matrix_direct:
-                        # Use double buffering for smooth updates
-                        logging.info(f"Frame {frame_count}: Using double buffering, clearing offscreen canvas")
-                        offscreen_canvas.Clear()
-                        
-                        # Get layout operations
-                        from layout import calculate_layout
-                        logging.info(f"Frame {frame_count}: Calculating layout for canvas size {self.canvas.width}x{self.canvas.height}")
-                        ops = calculate_layout(weather, self.canvas.width, self.canvas.height)
-                        
-                        logging.info(f"Frame {frame_count}: Generated {len(ops)} drawing operations")
-                        
-                        # Draw on offscreen canvas
-                        text_drawn_count = 0
-                        for i, op in enumerate(ops):
-                            if op.op_type == "text" and self.font:
-                                logging.info(f"Frame {frame_count}: Drawing text '{op.kwargs['text']}' at ({op.kwargs['x']}, {op.kwargs['y']}) "
-                                            f"color=({op.kwargs['r']}, {op.kwargs['g']}, {op.kwargs['b']})")
-                                color = graphics.Color(
-                                    op.kwargs["r"],
-                                    op.kwargs["g"],
-                                    op.kwargs["b"]
-                                )
-                                try:
-                                    # DrawText y coordinate should be: desired_top_y + font.baseline()
-                                    # The examples show: DrawText(canvas, font, x, y + font.baseline(), ...)
-                                    draw_y = op.kwargs["y"] + self.font.baseline
-                                    graphics.DrawText(
-                                        offscreen_canvas,
-                                        self.font,
-                                        op.kwargs["x"],
-                                        draw_y,
-                                        color,
-                                        op.kwargs["text"]
-                                    )
-                                    text_drawn_count += 1
-                                    logging.info(f"Frame {frame_count}: Successfully called DrawText for '{op.kwargs['text']}' (total drawn: {text_drawn_count})")
-                                except Exception as draw_error:
-                                    logging.error(f"Frame {frame_count}: Error calling DrawText: {draw_error}", exc_info=True)
-                            else:
-                                if op.op_type == "text":
-                                    logging.warning(f"Frame {frame_count}: Skipping text operation - font={self.font is not None}, op_type={op.op_type}")
-                                else:
-                                    logging.debug(f"Frame {frame_count}: Skipping non-text operation: {op.op_type}")
-                        
-                        logging.info(f"Frame {frame_count}: Drew {text_drawn_count} text strings")
-                        
-                        # Swap buffers
-                        offscreen_canvas = matrix_direct.SwapOnVSync(offscreen_canvas)
-                        logging.info(f"Frame {frame_count}: Rendered and swapped buffers")
-                    else:
-                        # Fake/PIL backend or no double buffering
-                        logging.warning(f"Frame {frame_count}: Not using double buffering - backend={self.backend}, MATRIX_AVAILABLE={MATRIX_AVAILABLE}, offscreen_canvas={offscreen_canvas is not None}")
-                        logging.debug(f"Frame {frame_count}: Rendering to {self.backend} backend...")
-                        render_weather(
-                            self.canvas,
-                            weather,
-                            self.font,
-                            graphics if MATRIX_AVAILABLE else None
-                        )
-                        # Print ASCII representation if fake canvas
-                        if isinstance(self.canvas, FakeMatrixCanvas):
-                            if frame_count % 10 == 1:  # Print every 10th frame to reduce spam
-                                print(f"\nFrame {frame_count}:")
-                                print(self.canvas.to_ascii())
-                        # Save PNG if PIL canvas
-                        elif isinstance(self.canvas, PILCanvas):
-                            output_file = getattr(self, "_output_file", "weather_output.png")
-                            self.canvas.save(output_file)
-                            logging.info(f"Saved weather display to {output_file}")
-                            print(f"Saved weather display to {output_file}")
-                            # Only render once for PNG output
-                            self.running = False
-                    
-                    # Sleep briefly before next frame
-                    time.sleep(1.0)
-                    
-                except KeyboardInterrupt:
-                    logging.info("Interrupted by user")
-                    break
-                except Exception as e:
-                    logging.error(f"Error in display loop (frame {frame_count}): {e}", exc_info=True)
-                    print(f"Error in display loop: {e}", file=sys.stderr)
-                    time.sleep(5.0)  # Wait before retrying
-                    
-        finally:
-            self.cleanup()
-    
-    def _signal_handler(self, signum, frame):
-        """Handle shutdown signals."""
-        print("\nShutting down...")
-        self.running = False
-    
-    def cleanup(self):
-        """Clean up resources."""
-        logging.info("Cleaning up resources...")
-        if self.canvas:
-            self.canvas.clear()
-            logging.debug("Canvas cleared")
-        logging.info("Cleanup complete")
-        print("Cleanup complete")
-
-
-def create_weather_provider(args) -> WeatherProviderBase:
-    """
-    Create weather provider based on configuration.
-    
-    Args:
-        args: Parsed command-line arguments
-        
-    Returns:
-        WeatherProviderBase instance
-    """
-    provider_name = args.provider.lower()
-    
-    if provider_name == "openweather":
-        api_key = args.api_key or os.environ.get("OPENWEATHER_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OpenWeather API key required (--api-key, OPENWEATHER_API_KEY env var, or .env file)"
-            )
-        
-        lat = args.lat or float(os.environ.get("WEATHER_LAT", "0"))
-        lon = args.lon or float(os.environ.get("WEATHER_LON", "0"))
-        
-        if lat == 0 and lon == 0:
-            raise ValueError(
-                "Latitude and longitude required (--lat/--lon, WEATHER_LAT/WEATHER_LON env vars, or .env file)"
-            )
-        
-        return OpenWeatherProvider(
-            api_key=api_key,
-            lat=lat,
-            lon=lon,
-            units=args.units or "metric",
-            lang=args.lang or "en"
-        )
-    else:
-        raise ValueError(f"Unknown weather provider: {provider_name}")
-
-
-def create_matrix_canvas(args, backend: str) -> MatrixCanvas:
-    """
-    Create matrix canvas based on backend type.
-    
-    Args:
-        args: Parsed command-line arguments
-        backend: Backend type ("pi", "fake", or "png")
-        
-    Returns:
-        MatrixCanvas instance
-    """
-    if backend == "fake":
-        return FakeMatrixCanvas(
-            width=args.led_cols or 64,
-            height=args.led_rows or 32
-        )
-    elif backend == "png":
-        return PILCanvas(
-            width=args.led_cols or 64,
-            height=args.led_rows or 32,
-            scale=10  # 10x scale for visibility
-        )
-    
-    elif backend == "pi":
-        if not MATRIX_AVAILABLE:
-            raise RuntimeError("rgbmatrix library not available. Install it or use --backend=fake")
-        
-        options = RGBMatrixOptions()
-        
-        # Set matrix options from command-line args
-        if args.led_gpio_mapping:
-            options.hardware_mapping = args.led_gpio_mapping
-        options.rows = args.led_rows or 32
-        options.cols = args.led_cols or 64
-        options.chain_length = args.led_chain or 1
-        options.parallel = args.led_parallel or 1
-        options.row_address_type = args.led_row_addr_type or 0
-        options.multiplexing = args.led_multiplexing or 0
-        options.pwm_bits = args.led_pwm_bits or 11
-        options.brightness = args.led_brightness or 100
-        options.pwm_lsb_nanoseconds = args.led_pwm_lsb_nanoseconds or 130
-        options.led_rgb_sequence = args.led_rgb_sequence or "RGB"
-        options.pixel_mapper_config = args.led_pixel_mapper or ""
-        options.panel_type = args.led_panel_type or ""
-        
-        if args.led_show_refresh:
-            options.show_refresh_rate = True
-        
-        if args.led_slowdown_gpio is not None:
-            options.gpio_slowdown = args.led_slowdown_gpio
-        
-        if args.led_no_hardware_pulse:
-            options.disable_hardware_pulsing = True
-        
-        if not args.led_no_drop_privs:
-            options.drop_privileges = True
-        
-        matrix = RGBMatrix(options=options)
-        # Store the matrix directly for easier access (like the samples do)
-        # Also return wrapped version for compatibility
-        canvas = RealMatrixCanvas(matrix)
-        canvas._matrix_direct = matrix  # Store direct reference
-        return canvas
-    
-    else:
-        raise ValueError(f"Unknown backend: {backend}")
-
-
-def parse_args():
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Display weather data on RGB LED matrix"
-    )
-    
-    # Weather configuration
-    parser.add_argument(
-        "--provider",
-        default=os.environ.get("WEATHER_PROVIDER", "openweather"),
-        help="Weather provider (default: openweather)"
-    )
-    parser.add_argument(
-        "--api-key",
-        default=None,
-        help="OpenWeather API key (or set OPENWEATHER_API_KEY env var)"
-    )
-    parser.add_argument(
-        "--lat",
-        type=float,
-        default=None,
-        help="Latitude (or set WEATHER_LAT env var)"
-    )
-    parser.add_argument(
-        "--lon",
-        type=float,
-        default=None,
-        help="Longitude (or set WEATHER_LON env var)"
-    )
-    parser.add_argument(
-        "--units",
-        choices=["metric", "imperial", "standard"],
-        default=None,
-        help="Temperature units (default: metric)"
-    )
-    parser.add_argument(
-        "--lang",
-        default=None,
-        help="Language code for descriptions (default: en)"
-    )
-    parser.add_argument(
-        "--cache-ttl",
-        type=int,
-        default=600,
-        help="Cache TTL in seconds (default: 600)"
-    )
-    
-    # Display configuration
-    parser.add_argument(
-        "--font",
-        default=None,
-        help="Path to BDF font file (default: fonts/7x13.bdf in project directory)"
-    )
-    parser.add_argument(
-        "--backend",
-        choices=["pi", "fake", "png"],
-        default="pi",
-        help="Backend type: pi for real hardware, fake for ASCII testing, png for PNG output (default: pi)"
-    )
-    parser.add_argument(
-        "--output",
-        default="weather_output.png",
-        help="Output PNG filename when using --backend=png (default: weather_output.png)"
-    )
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable verbose logging (DEBUG level)"
-    )
-    
-    # Matrix hardware options (mirroring samplebase.py)
-    parser.add_argument("-r", "--led-rows", type=int, default=32, help="Display rows")
-    parser.add_argument("--led-cols", type=int, default=64, help="Panel columns")
-    parser.add_argument("-c", "--led-chain", type=int, default=1, help="Daisy-chained boards")
-    parser.add_argument("-P", "--led-parallel", type=int, default=1, help="Parallel chains")
-    parser.add_argument("-p", "--led-pwm-bits", type=int, default=11, help="PWM bits")
-    parser.add_argument("-b", "--led-brightness", type=int, default=100, help="Brightness")
-    parser.add_argument("-m", "--led-gpio-mapping", help="Hardware mapping")
-    parser.add_argument("--led-scan-mode", type=int, choices=[0, 1], default=0)
-    parser.add_argument("--led-pwm-lsb-nanoseconds", type=int, default=130)
-    parser.add_argument("--led-show-refresh", action="store_true")
-    parser.add_argument("--led-slowdown-gpio", type=int, default=1)
-    parser.add_argument("--led-no-hardware-pulse", action="store_true")
-    parser.add_argument("--led-rgb-sequence", default="RGB")
-    parser.add_argument("--led-pixel-mapper", default="")
-    parser.add_argument("--led-row-addr-type", type=int, choices=[0, 1, 2, 3, 4], default=0)
-    parser.add_argument("--led-multiplexing", type=int, default=0)
-    parser.add_argument("--led-panel-type", default="")
-    parser.add_argument("--led-no-drop-privs", action="store_true")
-    
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser("RGB matrix weather display")
+    parser.add_argument("--log-file", default=DEFAULT_LOG_FILE)
+    parser.add_argument("--led-rows", type=int, default=32)
+    parser.add_argument("--led-cols", type=int, default=64)
+    parser.add_argument("--led-chain", type=int, default=2)
+    parser.add_argument("--led-parallel", type=int, default=1)
+    parser.add_argument("--led-pwm-bits", type=int, default=11)
+    parser.add_argument("--led-slowdown-gpio", type=int, default=2)
+    parser.add_argument("--brightness", type=int, default=80)
+    parser.add_argument("--font", default=DEFAULT_FONT)
+    parser.add_argument("--units", choices=["metric", "imperial", "standard"], default="metric")
+    parser.add_argument("--refresh", type=float, default=30.0, help="Seconds between refreshes")
+    parser.add_argument("--cache-ttl", type=int, default=600)
+    parser.add_argument("--max-retries", type=int, default=3)
+    parser.add_argument("--retry-delay", type=int, default=2)
+    parser.add_argument("--timeout", type=int, default=10, help="HTTP timeout in seconds")
+    parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
 
-def setup_logging(verbose: bool = False):
-    """Configure logging for the application."""
-    level = logging.DEBUG if verbose else logging.INFO
+def setup_logging(log_file: str, verbose: bool) -> None:
+    log_level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
-        level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        level=log_level,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(log_file)
+        ]
     )
 
 
-def main():
-    """Main entry point."""
-    args = parse_args()
-    
-    # Setup logging
-    setup_logging(verbose=args.verbose)
-    
-    logging.info("=" * 60)
-    logging.info("Weather Matrix Display Starting")
-    logging.info("=" * 60)
-    
+def load_config(units: str) -> Tuple[str, float, float, str]:
+    load_dotenv()
+    api_key = os.getenv("WEATHER_API_KEY")
+    lat = os.getenv("WEATHER_LAT")
+    lon = os.getenv("WEATHER_LON")
+    lang = os.getenv("WEATHER_LANG", "en")
+
+    if not api_key:
+        raise SystemExit("Missing WEATHER_API_KEY in environment")
+    if not lat or not lon:
+        raise SystemExit("Missing WEATHER_LAT/WEATHER_LON in environment")
+
     try:
-        logging.info(f"Configuration:")
-        logging.info(f"  Provider: {args.provider}")
-        logging.info(f"  Location: lat={args.lat or os.environ.get('WEATHER_LAT', 'N/A')}, lon={args.lon or os.environ.get('WEATHER_LON', 'N/A')}")
-        logging.info(f"  Units: {args.units or 'metric'}")
-        logging.info(f"  Cache TTL: {args.cache_ttl}s")
-        logging.info(f"  Backend: {args.backend}")
-        logging.info(f"  Matrix: {args.led_rows}x{args.led_cols}")
-        
-        # Create weather provider and service
-        provider = create_weather_provider(args)
-        logging.info("Weather provider created successfully")
-        
-        weather_service = WeatherService(
-            provider=provider,
-            cache_ttl_seconds=args.cache_ttl
-        )
-        logging.info(f"Weather service initialized (cache TTL: {args.cache_ttl}s)")
-        
-        # Create matrix canvas
-        canvas = create_matrix_canvas(args, args.backend)
-        logging.info(f"Matrix canvas created: {canvas.width}x{canvas.height}")
-        
-        # Default font path if not specified
-        font_path = args.font
-        if not font_path and args.backend == "pi":
-            # Use local font file - resolve path relative to script location
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            default_font = os.path.join(script_dir, "fonts", "7x13.bdf")
-            # Normalize and make absolute
-            default_font = os.path.abspath(os.path.normpath(default_font))
-            if os.path.exists(default_font):
-                font_path = default_font
-            else:
-                print(f"Warning: Default font not found at {default_font}")
-                print(f"Script directory: {script_dir}")
-                print("Font rendering may not work correctly.")
-        
-        # Create and run display
-        display = WeatherMatrixDisplay(
-            weather_service=weather_service,
-            canvas=canvas,
-            font_path=font_path,
-            backend=args.backend
-        )
-        
-        # Set output file for PNG backend
-        if args.backend == "png":
-            display._output_file = args.output
-        
-        display.run()
-        
+        lat_val = float(lat)
+        lon_val = float(lon)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid coordinates: {exc}") from exc
+
+    logging.info("Configuration loaded: lat=%s lon=%s units=%s", lat_val, lon_val, units)
+    return api_key, lat_val, lon_val, lang
+
+
+def init_matrix(args: argparse.Namespace) -> RGBMatrix:
+    if RGBMatrix is None:
+        raise SystemExit("rgbmatrix library not available; run on the Pi")
+
+    options = RGBMatrixOptions()
+    options.rows = args.led_rows
+    options.cols = args.led_cols
+    options.chain_length = args.led_chain
+    options.parallel = args.led_parallel
+    options.pwm_bits = args.led_pwm_bits
+    options.brightness = args.brightness
+    options.gpio_slowdown = args.led_slowdown_gpio
+
+    logging.info(
+        "Matrix init: rows=%s cols=%s chain=%s parallel=%s pwm_bits=%s brightness=%s slowdown=%s",
+        options.rows,
+        options.cols,
+        options.chain_length,
+        options.parallel,
+        options.pwm_bits,
+        options.brightness,
+        options.gpio_slowdown,
+    )
+
+    return RGBMatrix(options=options)
+
+
+def load_font(font_path: str) -> graphics.Font:
+    if graphics is None:
+        raise SystemExit("rgbmatrix library not available")
+
+    if not os.path.isabs(font_path):
+        font_path = os.path.join(BASE_DIR, font_path)
+    font_path = os.path.abspath(font_path)
+
+    font = graphics.Font()
+    logging.info("Loading font: %s", font_path)
+    font.LoadFont(font_path)
+    logging.info("Font loaded: height=%s baseline=%s", font.height, font.baseline)
+    return font
+
+
+def build_weather_service(api_key: str, lat: float, lon: float, args: argparse.Namespace) -> WeatherService:
+    provider = OpenWeatherProvider(
+        api_key=api_key,
+        lat=lat,
+        lon=lon,
+        units=args.units,
+        lang=os.getenv("WEATHER_LANG", "en"),
+        timeout=args.timeout,
+    )
+    service = WeatherService(
+        provider=provider,
+        cache_ttl_seconds=args.cache_ttl,
+        max_retries=args.max_retries,
+        retry_delay_seconds=args.retry_delay,
+    )
+    logging.info("Weather service ready (cache ttl=%ss)", args.cache_ttl)
+    return service
+
+
+def format_weather_lines(weather) -> Tuple[str, str, str]:
+    temp = f"{round(weather.temp):+d}°" if weather.temp is not None else "N/A"
+    condition = weather.condition_main.title()[:18]
+    feels = f"Feels {round(weather.feels_like):+d}°"
+    humidity = f"Hum {int(weather.humidity)}%"
+    wind = f"Wind {weather.wind_speed:.1f}m/s"
+    return temp, condition, f"{feels}  {humidity}  {wind}"
+
+
+def draw_weather(matrix: RGBMatrix, font: graphics.Font, weather) -> None:
+    temp_text, condition_text, info_text = format_weather_lines(weather)
+    matrix.Clear()
+
+    temp_color = graphics.Color(0, 113, 255)
+    condition_color = graphics.Color(220, 220, 220)
+    info_color = graphics.Color(180, 180, 180)
+
+    baseline = font.baseline
+    second_line = baseline + font.height + 2
+    third_line = second_line + font.height + 2
+
+    x = 2
+    x += graphics.DrawText(matrix, font, x, baseline, temp_color, temp_text)
+    x += 4
+    graphics.DrawText(matrix, font, x, baseline, condition_color, condition_text)
+
+    graphics.DrawText(matrix, font, 2, second_line, info_color, info_text)
+
+    timestamp_text = time.strftime("%H:%M:%S", time.localtime(weather.timestamp or time.time()))
+    graphics.DrawText(matrix, font, 2, third_line, info_color, f"Updated {timestamp_text}")
+
+
+def draw_status(matrix: RGBMatrix, font: graphics.Font, message: str, color=None) -> None:
+    matrix.Clear()
+    color = color or graphics.Color(255, 165, 0)
+    baseline = font.baseline
+    graphics.DrawText(matrix, font, 2, baseline, color, message[:32])
+
+
+def weather_loop(matrix, font, service: WeatherService, args: argparse.Namespace) -> None:
+    last_error = None
+    frame = 0
+    while True:
+        frame += 1
+        logging.info("Frame %s: fetching weather", frame)
+        try:
+            weather = service.get_latest()
+            logging.info(
+                "Weather: temp=%s feels=%s humidity=%s wind=%.1f condition=%s",
+                weather.temp,
+                weather.feels_like,
+                weather.humidity,
+                weather.wind_speed,
+                weather.condition_main,
+            )
+            draw_weather(matrix, font, weather)
+            last_error = None
+        except WeatherProviderError as err:
+            logging.error("Weather fetch failed: %s", err)
+            if last_error != str(err):
+                draw_status(matrix, font, "WEATHER API ERROR", graphics.Color(255, 0, 0))
+            last_error = str(err)
+        except Exception as exc:
+            logging.exception("Unexpected error: %s", exc)
+            draw_status(matrix, font, "FATAL ERROR", graphics.Color(255, 0, 0))
+
+        time.sleep(max(args.refresh, 1.0))
+
+
+def signal_handler(signum, frame):
+    logging.info("Received signal %s, shutting down", signum)
+    raise KeyboardInterrupt()
+
+
+def main() -> None:
+    args = parse_args()
+    setup_logging(args.log_file, args.verbose)
+    api_key, lat, lon, _ = load_config(args.units)
+
+    matrix = init_matrix(args)
+    font = load_font(args.font)
+    service = build_weather_service(api_key, lat, lon, args)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    draw_status(matrix, font, "Starting weather display", graphics.Color(0, 255, 0))
+
+    try:
+        weather_loop(matrix, font, service, args)
     except KeyboardInterrupt:
-        print("\nInterrupted by user")
-        sys.exit(0)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        logging.info("Stopping display")
+    finally:
+        matrix.Clear()
+        logging.info("Matrix cleared")
 
 
 if __name__ == "__main__":
     main()
-

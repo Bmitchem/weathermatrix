@@ -68,7 +68,9 @@ class OpenWeatherProvider(WeatherProviderBase):
             response = requests.get(self.BASE_URL, params=params, timeout=self.timeout)
             
             logging.info(f"API response status: {response.status_code}")
-            logging.debug(f"Response headers: {dict(response.headers)}")
+            headers = getattr(response, "headers", None)
+            if headers:
+                logging.debug("Response headers: %s", headers)
             
             # Check HTTP status
             if not response.ok:
@@ -137,6 +139,9 @@ class OpenWeatherProvider(WeatherProviderBase):
             
         except requests.exceptions.RequestException as e:
             logging.error(f"Network error during API request: {e}")
+            raise WeatherProviderError(f"Network error: {str(e)}")
+        except Exception as e:  # pragma: no cover - defensive fallback
+            logging.error(f"Unexpected error during API request: {e}")
             raise WeatherProviderError(f"Network error: {str(e)}")
         except (KeyError, ValueError, TypeError) as e:
             logging.error(f"Failed to parse API response: {e}", exc_info=True)
