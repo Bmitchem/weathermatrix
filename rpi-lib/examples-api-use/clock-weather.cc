@@ -298,7 +298,7 @@ static int usage(const char *progname) {
           "\t-B <r,g,b>        : Background-Color. Default 0,0,0\n"
           "\t-O <r,g,b>        : Outline-Color, e.g. to increase contrast.\n"
           "\t--weather-refresh <sec> : Weather refresh interval (Default: 600)\n"
-          "\t--units <unit>    : Temperature units: metric, imperial, standard (Default: metric)\n"
+          "\t--units <unit>    : Temperature units: metric, imperial, standard (Default: imperial)\n"
           "\n"
           );
   rgb_matrix::PrintMatrixFlags(stderr);
@@ -336,7 +336,7 @@ int main(int argc, char *argv[]) {
   int letter_spacing = 0;
   int line_spacing = 2;
   int weather_refresh = 600;  // 10 minutes default
-  std::string units = "metric";
+  std::string units = "imperial";
 
   int opt;
   int option_index = 0;
@@ -493,8 +493,12 @@ int main(int argc, char *argv[]) {
     // Draw weather line
     if (current_weather.valid) {
       char temp_unit = (units == "imperial") ? 'F' : 'C';
-      snprintf(weather_buffer, sizeof(weather_buffer), "%.0f%c %s",
-               current_weather.temp, temp_unit, current_weather.condition_main.c_str());
+      const char *wind_unit = (units == "imperial") ? "mph" : "m/s";
+      snprintf(weather_buffer, sizeof(weather_buffer), "%.0f%c H:%.0f%% W:%.0f%s %s",
+               current_weather.feels_like, temp_unit, 
+               current_weather.humidity, 
+               current_weather.wind_speed, wind_unit,
+               current_weather.condition_main.c_str());
       
       if (outline_font) {
         rgb_matrix::DrawText(offscreen, *outline_font,
