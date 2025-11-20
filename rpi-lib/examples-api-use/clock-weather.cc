@@ -494,11 +494,29 @@ int main(int argc, char *argv[]) {
     if (current_weather.valid) {
       char temp_unit = (units == "imperial") ? 'F' : 'C';
       const char *wind_unit = (units == "imperial") ? "mph" : "m/s";
-      snprintf(weather_buffer, sizeof(weather_buffer), "%.0f%c H:%.0f%% W:%.0f%s %s",
+      
+      // First line: temp and condition
+      snprintf(weather_buffer, sizeof(weather_buffer), "%.0f%c %s",
                current_weather.feels_like, temp_unit, 
-               current_weather.humidity, 
-               current_weather.wind_speed, wind_unit,
                current_weather.condition_main.c_str());
+      
+      if (outline_font) {
+        rgb_matrix::DrawText(offscreen, *outline_font,
+                             x - 1, y + font.baseline() + line_offset,
+                             outline_color, NULL, weather_buffer,
+                             letter_spacing - 2);
+      }
+      rgb_matrix::DrawText(offscreen, font,
+                           x, y + font.baseline() + line_offset,
+                           weather_color, NULL, weather_buffer,
+                           letter_spacing);
+      
+      line_offset += font.height() + line_spacing;
+      
+      // Second line: humidity and wind speed
+      snprintf(weather_buffer, sizeof(weather_buffer), "H:%.0f%% W:%.0f%s",
+               current_weather.humidity, 
+               current_weather.wind_speed, wind_unit);
       
       if (outline_font) {
         rgb_matrix::DrawText(offscreen, *outline_font,
